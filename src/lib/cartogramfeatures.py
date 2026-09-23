@@ -6,31 +6,12 @@
 import functools
 import math
 import multiprocessing
-import os.path
-import pathlib
-import platform
-import sys
+
+import joblib
 
 from qgis.core import QgsGeometry, QgsProcessingFeedback
 
 from .cartogramfeature import CartogramFeature
-
-if platform.system() == "Windows":
-    sys.argv = [os.path.abspath(__file__)]
-    multiprocessing.set_executable(os.path.join(sys.exec_prefix, "pythonw.exe"))
-elif platform.system() == "Darwin":
-    sys.argv = [os.path.abspath(__file__)]
-    multiprocessing.set_executable(pathlib.Path(sys.executable).parent / "python")
-
-
-# monkey-patch functools for older Python versions
-# (e.g. installed with QGIS 3.16 on MacOS)
-if "cache" not in dir(functools):
-
-    def _cache(user_function):
-        return functools.lru_cache(maxsize=None)(user_function)
-
-    functools.cache = _cache
 
 
 class CartogramFeatures:
@@ -39,15 +20,8 @@ class CartogramFeatures:
     def __init__(self, feedback=lambda: QgsProcessingFeedback(), source_layer=None):
         """Handle a list of `CartogramFeature`."""
         self._features = {}
-        self.workers = multiprocessing.get_context("spawn").Pool()
         self.feedback = feedback
-        self.feedback.canceled.connect(self.stop_workers)
         self.source_layer = source_layer
-
-    def __del__(self):
-        """Take care of the worker pool upon unloading."""
-        self.workers.close()
-        del self.workers
 
     # next two methods not alphabetical order, because they’re
     # instantiator and data output
@@ -110,17 +84,15 @@ class CartogramFeatures:
             for part, ring, vertex, point in self._features[feature_id].vertices:
                 yield feature_id, part, ring, vertex, point
 
-    def stop_workers(self, *args, **kwargs):
-        self.workers.terminate()
-        self.workers.join()
-
     @property
     def total_area(self):
         total_area = sum(
-            self.workers.imap_unordered(
-                # lambda x: x.area,
-                functools.partial(_getattr, name="area"),
-                self,
+            joblib.Parallel(n_jobs=-1)(
+                joblib.delayed(_getattr)(
+                    cartogram_feature,
+                    name="area",
+                )
+                for cartogram_feature in self
             )
         )
         return total_area
@@ -131,10 +103,12 @@ class CartogramFeatures:
         for feature in self:
             feature.area_value_ratio = area_value_ratio
         total_error = sum(
-            self.workers.imap_unordered(
-                # lambda x: x.sizeerror,
-                functools.partial(_getattr, name="sizeerror"),
-                self,
+            joblib.Parallel(n_jobs=-1)(
+                joblib.delayed(_getattr)(
+                    cartogram_feature,
+                    name="sizeerror",
+                )
+                for cartogram_feature in self
             )
         )
         return total_error
@@ -146,10 +120,12 @@ class CartogramFeatures:
     @functools.cached_property
     def total_value(self):
         total_value = sum(
-            self.workers.imap(
-                # lambda x: x.value,
-                functools.partial(_getattr, name="value"),
-                self,
+            joblib.Parallel(n_jobs=-1)(
+                joblib.delayed(_getattr)(
+                    cartogram_feature,
+                    name="value",
+                )
+                for cartogram_feature in self
             )
         )
         return total_value
@@ -164,14 +140,13 @@ class CartogramFeatures:
             and not self.feedback.isCanceled()
         ):
             reduction_factor = 1.0 / (average_error + 1)
-            transformed_vertices = self.workers.imap_unordered(
-                functools.partial(
-                    CartogramFeatures.transformVertex,
+            transformed_vertices = joblib.Parallel(n_jobs=-1, return_as="generator_unordered")(
+                joblib.delayed(CartogramFeatures.transformVertex)(
+                    vertex,
                     features=list(self.features),
                     reduction_factor=reduction_factor,
-                ),
-                self.vertices,
-                chunksize=self._chunksize,
+                )
+                for vertex in self.vertices
             )
 
             number_of_vertices_processed = 0
