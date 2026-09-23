@@ -6,10 +6,11 @@
 import functools
 import math
 import multiprocessing
+import time
 
 import joblib
 
-from qgis.core import QgsGeometry, QgsProcessingFeedback
+from qgis.core import QgsGeometry, QgsProcessingFeedback, QgsMessageLog
 
 from .cartogramfeature import CartogramFeature
 
@@ -87,7 +88,7 @@ class CartogramFeatures:
     @property
     def total_area(self):
         total_area = sum(
-            joblib.Parallel(n_jobs=-1)(
+            joblib.Parallel(n_jobs=-1, prefer="threads")(
                 joblib.delayed(_getattr)(
                     cartogram_feature,
                     name="area",
@@ -103,7 +104,7 @@ class CartogramFeatures:
         for feature in self:
             feature.area_value_ratio = area_value_ratio
         total_error = sum(
-            joblib.Parallel(n_jobs=-1)(
+            joblib.Parallel(n_jobs=-1, prefer="threads")(
                 joblib.delayed(_getattr)(
                     cartogram_feature,
                     name="sizeerror",
@@ -120,7 +121,7 @@ class CartogramFeatures:
     @functools.cached_property
     def total_value(self):
         total_value = sum(
-            joblib.Parallel(n_jobs=-1)(
+            joblib.Parallel(n_jobs=-1, prefer="threads")(
                 joblib.delayed(_getattr)(
                     cartogram_feature,
                     name="value",
@@ -131,6 +132,7 @@ class CartogramFeatures:
         return total_value
 
     def transform(self, max_iterations=10, max_average_error=0.1):
+        start = time.time()
         iteration = 0
         average_error = self.average_error
 
@@ -140,7 +142,9 @@ class CartogramFeatures:
             and not self.feedback.isCanceled()
         ):
             reduction_factor = 1.0 / (average_error + 1)
-            transformed_vertices = joblib.Parallel(n_jobs=-1, return_as="generator_unordered")(
+            transformed_vertices = joblib.Parallel(
+                n_jobs=-1, prefer="threads", return_as="generator_unordered"
+            )(
                 joblib.delayed(CartogramFeatures.transformVertex)(
                     vertex,
                     features=list(self.features),
@@ -181,8 +185,13 @@ class CartogramFeatures:
         if self.source_layer is not None:
             self.source_layer.startEditing()
             for feature in self.features:
-                self.source_layer.changeGeometry(feature.id, QgsGeometry().fromWkt(feature.wkt))
+                self.source_layer.changeGeometry(
+                    feature.id, QgsGeometry().fromWkt(feature.wkt)
+                )
             self.source_layer.commitChanges()
+
+        end = time.time()
+        QgsMessageLog.logMessage(f"transform took {end - start}")
 
         return iteration, average_error
 
