@@ -184,7 +184,7 @@ class CartogramFeatures(ParallelWorkerMixin):
 
         end = time.time()
 
-        QgsMessageLog.logMessage(f"transform took {end-start}")
+        QgsMessageLog.logMessage(f"transform took {end - start}")
 
         return iteration, average_error
 
