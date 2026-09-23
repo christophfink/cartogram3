@@ -10,8 +10,9 @@ import os.path
 import pathlib
 import platform
 import sys
+import time
 
-from qgis.core import QgsGeometry, QgsProcessingFeedback
+from qgis.core import QgsGeometry, QgsProcessingFeedback, QgsMessageLog
 
 from .cartogramfeature import CartogramFeature
 
@@ -155,6 +156,7 @@ class CartogramFeatures:
         return total_value
 
     def transform(self, max_iterations=10, max_average_error=0.1):
+        start = time.time()
         iteration = 0
         average_error = self.average_error
 
@@ -208,6 +210,9 @@ class CartogramFeatures:
             for feature in self.features:
                 self.source_layer.changeGeometry(feature.id, QgsGeometry().fromWkt(feature.wkt))
             self.source_layer.commitChanges()
+
+        end = time.time()
+        QgsMessageLog.logMessage(f"transform took {end - start}")
 
         return iteration, average_error
 
